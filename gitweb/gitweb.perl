@@ -5875,10 +5875,74 @@ sub git_shortlog_body {
 
 	print "<table class=\"shortlog\">\n";
 	my $alternate = 1;
+	my $showgraph = 1;
+	my @graphcols_next;
+	my $splitcol_next;
+	my $splitid_next;
 	for (my $i = $from; $i <= $to; $i++) {
 		my %co = %{$commitlist->[$i]};
 		my $commit = $co{'id'};
 		my $ref = format_ref_marker($refs, $commit);
+		my $commitcol;
+		my @graphcols;
+
+		if ($showgraph) {
+			@graphcols = @graphcols_next;
+			@graphcols_next = ();
+			my $splitcol = $splitcol_next;
+			$splitcol_next = undef;
+			my $splitid = $splitid_next;
+			$splitid_next = undef;
+			my $splitcolfrom;
+
+			# Front commit; Note also paging of the log
+			push @graphcols, $commit unless $commit ~~ @graphcols;
+
+			# Find correct columns first...
+			for my $col (0 .. $#graphcols) {
+				if ($graphcols[$col] eq $commit) {
+					if (!defined($commitcol)) {
+						$commitcol = $col;
+					} else {
+						print "DOUBLE COMMIT?!";
+					}
+
+					for (@{$co{'parents'}}) {
+						if ($_ ~~ @graphcols_next) {
+							$splitcol_next = $col;
+							if ($#{$co{'parents'}}) {
+								$splitcol_next++;
+							}
+							$splitid_next = $_;
+						} else {
+							push @graphcols_next, $_;
+						}
+					}
+				} else {
+					if ($graphcols[$col] ~~ @graphcols_next) {
+						$splitcol_next = $col;
+						if ($#{$co{'parents'}}) {
+							$splitcol_next++;
+						}
+						$splitid_next = $graphcols[$col];
+					} else {
+						push @graphcols_next, $graphcols[$col];
+					}
+				}
+
+				if ($graphcols[$col] eq $splitid) {
+					$splitcolfrom = $col;
+				}
+			}
+
+			if (defined $splitcol) {
+				print "<tr><td class=\"graph\">";
+				git_graph_ascii_split(\@graphcols, $splitcol, $splitcolfrom);
+				$splitcol = undef;
+				print "</td></tr>";
+			}
+		}
+
 		if ($alternate) {
 			print "<tr class=\"dark\">\n";
 		} else {
@@ -5886,6 +5950,12 @@ sub git_shortlog_body {
 		}
 		$alternate ^= 1;
 		# git_summary() used print "<td><i>$co{'age_string'}</i></td>\n" .
+
+		if ($showgraph) {
+			print "<td class=\"graph\">";
+			git_graph_ascii_main(\@graphcols, $commitcol, $#{$co{'parents'}});
+			print "</td>\n";
+		}
 		print "<td title=\"$co{'age_string_age'}\"><i>$co{'age_string_date'}</i></td>\n" .
 		      format_author_html('td', \%co, 10) . "<td>";
 		print format_subject_html($co{'title'}, $co{'title_short'},
@@ -5901,6 +5971,14 @@ sub git_shortlog_body {
 		}
 		print "</td>\n" .
 		      "</tr>\n";
+
+		# Graph special lines...
+		if ($#{$co{'parents'}} > 0) {
+			# Merge commit
+			print "<tr><td class=\"graph\">\n";
+			git_graph_ascii_merge(\@graphcols, $commitcol, $co{'parents'});
+			print "</td></tr>\n";
+		}
 	}
 	if (defined $extra) {
 		print "<tr>\n" .
@@ -5908,6 +5986,106 @@ sub git_shortlog_body {
 		      "</tr>\n";
 	}
 	print "</table>\n";
+}
+
+sub git_graph_ascii_split {
+	my($graphcols, $splitcol, $splitcolfrom) = @_;
+
+	if (!defined($splitcolfrom)) {
+		print "splitcolfrom not found!<br/>";
+	}
+	# Split commit: join from columt "$splitcol" to the line where the commit is!
+
+	if ($splitcolfrom == $splitcol-1) {
+	}
+	elsif ($splitcolfrom < $splitcol+1) {
+		#      | |\ \ \ \
+		# >>>> | | |_|_|/  <<<<
+		#      | |/| | |
+		#      | * | | |
+		for my $col (0 .. $#{$graphcols}) {
+			if ($col < $splitcol) {	# TODO only for merge commits?
+				print "<span style=\"color: #", substr(${$graphcols}[$col], 0, 6), "\">";
+				print "&#x2503;";
+				print "</span>";
+				print "<span style=\"color: #", substr(${$graphcols}[$splitcolfrom], 0, 6), "\">";
+				if ($col <= $splitcolfrom) {
+					print " ";
+				} elsif ($col < $splitcol-1) {
+					print "&#x2500;";
+				} else {
+					print "&#x2571; ";
+				}
+				print "</span>";
+			} else {
+				print "<span style=\"color: #", substr(${$graphcols}[$col], 0, 6), "\">";
+				print "&#x2571; ";
+				print "</span>";
+			}
+		}
+		print "<br />";
+	} else {
+		print "TODO splititcolfrom > splitcol<br />";
+	}
+
+	for my $col (0 .. $#{$graphcols}) {
+		print "<span style=\"color: #", substr(${$graphcols}[$col], 0, 6), "\">";
+		if ($col < $splitcolfrom) {
+			print "&#x2503; ";
+		} elsif ($col == $splitcolfrom) {
+			print "&#x2503;&#x2571;";
+			if ($splitcolfrom == $splitcol-1) {
+				print " ";
+			}
+		} elsif ($col > $splitcolfrom && $col < $splitcol) {
+			print "&#x2503; ";
+		} else {
+			print "&#x2571; ";
+		}
+		print "</span>";
+	}
+}
+
+sub git_graph_ascii_main {
+	my ($graphcols, $commitcol, $nparents) = @_;
+
+	for my $col (0 .. $#{$graphcols}) {
+		print "<span style=\"color: #", substr(${$graphcols}[$col], 0, 6), "\">";
+		if ($commitcol == $col) {
+			print "&#x25c9; ";
+		} else {
+			if ($nparents > 0 && $col > $commitcol) {
+				print "&#x2572; ";
+			} else {
+				print "&#x2503; ";
+			}
+		}
+		print "</span>";
+	}
+}
+
+sub git_graph_ascii_merge {
+	my ($graphcols, $commitcol, $parents) = @_;
+
+	for my $col (0 .. $#{$graphcols}) {
+		if ($col < $commitcol) {
+			print "<span style=\"color: #", substr(${$graphcols}[$col], 0, 6), "\">";
+			print "&#x2503; ";
+			print "</span>";
+		} elsif ($col == $commitcol ) {
+			print "<span style=\"color: #", substr(${$parents}[0], 0, 6), "\">";
+			print "&#x2503;";
+			print "</span>";
+			print "<span style=\"color: #", substr(${$parents}[1], 0, 6), "\">";
+			# Assuming only two parents!
+			print "&#x2572; ";
+			print "</span>";
+		} else {
+			print "<span style=\"color: #", substr(${$graphcols}[$col], 0, 6), "\">";
+			print "&#x2572; ";
+			print "</span>";
+		}
+	}
 }
 
 sub git_history_body {

@@ -284,6 +284,13 @@ td.link, td.selflink {
 	font-size: 70%;
 }
 
+td.graph {
+	white-space: nowrap;
+	font-family: monospace;
+	font-size: 170%;
+	padding: 0;
+}
+
 td.selflink {
 	padding-right: 0px;
 }
